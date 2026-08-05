@@ -1,0 +1,19 @@
+{
+  "name": "@red-cup-engineering/committing-git-paths-service",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Stages and commits only explicitly named paths in one Git repository.",
+  "bin": {
+    "commit-git-paths": "./scripts/commit-git-paths.mjs"
+  },
+  "exports": "./scripts/commit-git-paths.mjs",
+  "scripts": {
+    "check": "node --check scripts/commit-git-paths.mjs",
+    "test": "node --test test/*.test.mjs",
+    "verify": "npm run check && npm test"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
