@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const scriptDirectory = dirname(fileURLToPath(import.meta.url));
-const defaultGit = resolve(scriptDirectory, "../../../scripts/git-services");
+const defaultGit = "/usr/bin/git";
 
-export function commitGitPaths({ repository = process.cwd(), paths, message, dryRun = false, gitBin = process.env.GIT_SERVICES_BIN ?? defaultGit } = {}) {
+export function commitGitPaths({ repository = process.cwd(), paths, message, dryRun = false, gitBin = defaultGit } = {}) {
   if (!Array.isArray(paths) || paths.length === 0 || paths.some((path) => typeof path !== "string" || path.length === 0)) {
     throw new TypeError("at least one path is required");
   }
