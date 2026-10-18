@@ -4,6 +4,11 @@
   "private": true,
   "type": "module",
   "description": "Stages and commits only explicitly named paths in one Git repository.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/red-cup-engineering/git-services-section.git",
+    "directory": "services/committing-git-paths-service"
+  },
   "bin": {
     "commit-git-paths": "./scripts/commit-git-paths.mjs"
   },
