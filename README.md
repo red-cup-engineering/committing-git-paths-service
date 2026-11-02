@@ -63,3 +63,16 @@ npm test
 An earlier version refused to commit while unrelated paths were staged
 (`already-staged paths: ...`). The isolated candidate index replaces that
 refusal: unrelated staged tuples are left staged and uncommitted.
+
+## Endpoints and recovery
+
+Literal names, including names that resemble Git pathspec magic, are handled as literal file endpoints. A selected
+symlink file is committed as link bytes; directories, nested repository endpoints, nonexistent untracked paths, paths
+through symlink directories and `.git` metadata paths are refused. When another commit advances `HEAD` after the
+candidate is built, the result is `committed: false`, `reason: "head-advanced"` with `candidate` and `witnessRef`: the
+witness ref retains the candidate for recovery and the branch stays at the other commit. After a successful install
+only the selected endpoints are reconciled to the installed candidate; every outside staged tuple stays untouched and
+selected endpoints do not remain staged against the old tree. The operation uses `commit-tree` and `update-ref`
+plumbing; an executable `post-commit` hook runs after ref and index installation and its outcome is reported in
+`postCommit` (a hook failure leaves the installed commit intact). Configured `pre-commit`, `prepare-commit-msg` and
+`commit-msg` hooks and `commit.gpgSign=true` are refused because an isolated candidate cannot honor those policies.
