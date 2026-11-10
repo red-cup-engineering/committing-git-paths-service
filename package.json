@@ -15,7 +15,8 @@
   "scripts": {
     "check": "node --check scripts/commit-git-paths.mjs && node --check src/commit-git-exact-files.mjs",
     "test": "node --test test/*.test.mjs",
-    "verify": "npm run check && npm test"
+    "verify": "npm run check && npm test",
+    "test:consumer": "node --test examples/quickstart.test.mjs"
   },
   "engines": {
     "node": ">=22"

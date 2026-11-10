@@ -76,3 +76,7 @@ selected endpoints do not remain staged against the old tree. The operation uses
 plumbing; an executable `post-commit` hook runs after ref and index installation and its outcome is reported in
 `postCommit` (a hook failure leaves the installed commit intact). Configured `pre-commit`, `prepare-commit-msg` and
 `commit-msg` hooks and `commit.gpgSign=true` are refused because an isolated candidate cannot honor those policies.
+
+## Acceptance
+
+Run `npm test` for the source suite. See the [API reference](docs/API.md) and [runnable consumer example](examples/quickstart.test.mjs).

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "basis": "Commit explicitly selected repository files while preserving other working-tree changes.",
+  "cases": [
+    {
+      "id": "COMMITTING-GIT-PATHS-SERVICE-REFUSAL",
+      "role": "source",
+      "kind": "refusal",
+      "claim": "The exact-file operation refuses a directory as a file endpoint.",
+      "file": "test/commit-git-paths.test.mjs",
+      "test": "commitGitExactFiles rejects directory endpoints"
+    },
+    {
+      "id": "COMMITTING-GIT-PATHS-SERVICE-QUICKSTART",
+      "role": "consumer",
+      "kind": "example",
+      "claim": "An installed caller commits a selected file and leaves an unrelated edit in the worktree.",
+      "file": "examples/quickstart.test.mjs"
+    }
+  ]
+}
