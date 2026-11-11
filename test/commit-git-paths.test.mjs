@@ -93,7 +93,7 @@ test("commit-git-paths runs through a symlink for dry-run and commit", async () 
 });
 
 test("importing commit-git-paths has no CLI side effect", () => {
-  const output = execFileSync(process.execPath, ["--input-type=module", "-e", 'import("./scripts/commit-git-paths.mjs")'], { cwd: process.cwd(), encoding: "utf8" });
+  const output = execFileSync(process.execPath, ["--input-type=module", "-e", 'import("./scripts/commit-git-paths.mjs")'], { cwd: fileURLToPath(new URL("../", import.meta.url)), encoding: "utf8" });
   assert.equal(output, "");
 });
 
