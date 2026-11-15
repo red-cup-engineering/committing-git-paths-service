@@ -14,7 +14,8 @@
   "exports": "./scripts/commit-git-paths.mjs",
   "scripts": {
     "check": "node --check scripts/commit-git-paths.mjs && node --check src/commit-git-exact-files.mjs",
-    "verify": "npm run check"
+    "test": "node --test test/commit-custody.test.mjs",
+    "verify": "npm run check && npm test"
   },
   "engines": {
     "node": ">=22"

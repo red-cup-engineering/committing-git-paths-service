@@ -52,12 +52,6 @@ const result = commitGitPaths({
 `"selected-worktree-changed"`, or `"head-advanced"` when it has not moved the
 branch ref.
 
-## Test
-
-```sh
-npm test
-```
-
 ## Staged work outside the selection
 
 An earlier version refused to commit while unrelated paths were staged
@@ -79,4 +73,8 @@ plumbing; an executable `post-commit` hook runs after ref and index installation
 
 ## Acceptance
 
-Run `npm test` for the source suite. See the [runnable consumer example](examples/quickstart.test.mjs).
+Run `npm run verify`. The native tests invoke the real CLI and library in
+temporary repositories. A manifest-only operation must keep every other
+committed tree entry, outside staged Git tuples and existing working bytes.
+If the selected file changes before installation, the branch and pre-existing
+index must remain unchanged. No test publishes a package or pushes a ref.
