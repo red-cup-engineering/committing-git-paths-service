@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -36,8 +37,8 @@ test("a manifest-only CLI operation preserves the parent tree and outside staged
   write("src/staged.mjs", "export const staged = 2;\n");
   git("add", "src/staged.mjs");
   const stagedIndex = git("ls-files", "--stage", "--", "src/staged.mjs");
-  write("src/staged.mjs", "export const staged = 3;\n");
-  write("src/runtime.mjs", "export const runtime = 2;\n");
+  write("src/staged.mjs", "export const staged = 300;\n");
+  write("src/runtime.mjs", "export const runtime = 22;\n");
 
   const result = JSON.parse(execFileSync(process.execPath, [cli, "--repository", repository,
     "--path", "package.json", "--message", "Normalize package description"], { cwd: repository, env, encoding: "utf8" }));
@@ -50,8 +51,8 @@ test("a manifest-only CLI operation preserves the parent tree and outside staged
   assert.equal(git("ls-tree", "-r", parent, "--", "src"), git("ls-tree", "-r", "HEAD", "--", "src"));
   assert.equal(git("ls-files", "--stage", "--", "src/staged.mjs"), stagedIndex);
   assert.equal(git("diff", "--cached", "--name-only"), "src/staged.mjs\n");
-  assert.equal(read("src/staged.mjs"), "export const staged = 3;\n");
-  assert.equal(read("src/runtime.mjs"), "export const runtime = 2;\n");
+  assert.equal(read("src/staged.mjs"), "export const staged = 300;\n");
+  assert.equal(read("src/runtime.mjs"), "export const runtime = 22;\n");
   assert.equal(git("status", "--short"), " M src/runtime.mjs\nMM src/staged.mjs\n");
 });
 
@@ -69,4 +70,25 @@ test("a selected worktree change before installation preserves the branch and ex
   assert.equal(git("rev-parse", "HEAD").trim(), parent);
   assert.equal(git("ls-files", "--stage"), indexBefore);
   assert.equal(read("package.json"), newer);
+});
+
+test("a producer digest qualifies the actual Git blob and refuses changed bytes before moving the ref", t => {
+  const { repository, git, write, env, parent } = checkout(t);
+  const lockfile="package-lock.json", received='{"name":"fixture","lockfileVersion":3}\n';
+  write(lockfile, received+"\n");
+  const expected={ [lockfile]:"sha256:"+createHash("sha256").update(received).digest("hex") };
+  const expectedPath=join(repository,"producer-digests.json");
+  write("producer-digests.json",JSON.stringify(expected));
+  const selected=["--repository",repository,"--path",lockfile,"--expected-file-digests",expectedPath,"--message","Receive qualified lock"];
+  const indexBefore=git("ls-files","--stage");
+  assert.throws(()=>commitGitExactFiles({repository,paths:[lockfile],message:"Receive lock",expectedFileDigests:expected}),
+    {code:"SELECTED_FILE_DIGEST_MISMATCH"});
+  assert.equal(git("rev-parse","HEAD").trim(),parent);
+  assert.equal(git("ls-files","--stage"),indexBefore);
+  git("config","core.autocrlf","true");
+  write(lockfile,received.replaceAll("\n","\r\n"));
+  const result=JSON.parse(execFileSync(process.execPath,[cli,...selected],{cwd:repository,env,encoding:"utf8"}));
+  assert.equal(result.committed,true);
+  assert.deepEqual(result.committedPaths,[lockfile]);
+  assert.equal(git("show",`HEAD:${lockfile}`),received);
 });

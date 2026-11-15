@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { closeSync, existsSync, lstatSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -46,16 +47,17 @@ function assertDecommissionClaimIsBacked(message, paths) {
  * commit exists to be exact about *what* is committed regardless of *how many* paths that takes; an
  * implementation that silently falls over past a few thousand paths (the OS argv-size ceiling,
  * `ARG_MAX`) contradicts that purpose, so no call site here is sized by argument-list length.
- * @param {{repository?: string, paths: string[], message: string, gitBin?: string, beforeInstall?: (candidate: {head: string, parent: string, paths: string[]}) => void, dryRun?: boolean}} options Exact-file commit options.
+ * @param {{repository?: string, paths: string[], message: string, gitBin?: string, beforeInstall?: (candidate: {head: string, parent: string, paths: string[]}) => void, dryRun?: boolean, expectedFileDigests?: Record<string,string>}} options Exact-file commit options.
  * @returns {{repository: string, paths: string[], message: string, committed: boolean, head?: string, parent: string, committedPaths?: string[], reason?: string, candidate?: string, witnessRef?: string, indexReconciled?: boolean, postCommit?: {ran: boolean, success: boolean, output: string}}} Commit result or an uninstalled candidate witness.
  * @throws {TypeError|Error} When inputs, repository state, hooks, signing, or file endpoints are unsafe.
  */
-export function commitGitExactFiles({ repository = process.cwd(), paths, message, gitBin = defaultGit, beforeInstall, dryRun = false } = {}) {
+export function commitGitExactFiles({ repository = process.cwd(), paths, message, gitBin = defaultGit, beforeInstall, dryRun = false, expectedFileDigests } = {}) {
   validateOptions(paths, message, beforeInstall);
   assertDecommissionClaimIsBacked(message, paths);
   const root = runGit(gitBin, resolve(repository), ["rev-parse", "--show-toplevel"]).trim();
   const requestedPaths = [...new Set(paths.map(normalizeLiteralPath))];
   const requestedSet = new Set(requestedPaths);
+  const expected = expectedDigestMap(expectedFileDigests, requestedSet);
   rejectUnsupportedPolicies(gitBin, root);
   rejectUnsafeRepositoryState(gitBin, root);
   const headTrackedPaths = bulkPathSet(gitBin, root, ["ls-tree", "-z", "-r", "--full-tree", "HEAD"]);
@@ -73,9 +75,12 @@ export function commitGitExactFiles({ repository = process.cwd(), paths, message
     runGit(gitBin, root, ["read-tree", parent], environment);
     addCandidateEndpoints(gitBin, root, requestedPaths, forceAddPaths, environment);
     const committedPaths = splitNull(runGit(gitBin, root, ["diff-index", "--cached", "--name-only", "-z", parent], environment));
+    if (committedPaths.length === 0 && !expected)
+      return Object.freeze({ repository: root, paths: requestedPaths, message, committed: false, parent, reason: "nothing-staged" });
+    const indexEntries = filterNulEntriesToPaths(runGit(gitBin, root, ["ls-files", "--stage", "-z"], environment), requestedSet);
+    if (expected) assertExpectedCandidateDigests(gitBin, root, indexEntries, expected);
     if (committedPaths.length === 0) return Object.freeze({ repository: root, paths: requestedPaths, message, committed: false, parent, reason: "nothing-staged" });
     assertExactPaths(requestedPaths, committedPaths);
-    const indexEntries = filterNulEntriesToPaths(runGit(gitBin, root, ["ls-files", "--stage", "-z"], environment), requestedSet);
     const tree = runGit(gitBin, root, ["write-tree"], environment).trim();
     assertExactPaths(requestedPaths, splitNull(runGit(gitBin, root, ["diff-tree", "--no-commit-id", "-r", "--name-only", "-z", parent, tree], environment)));
     assertTreeMatchesIndex(gitBin, root, tree, indexEntries);
@@ -97,6 +102,38 @@ export function commitGitExactFiles({ repository = process.cwd(), paths, message
   } finally {
     rmSync(temporaryDirectory, { recursive: true, force: true });
   }
+}
+
+function expectedDigestMap(record, selectedPaths) {
+  if (record === undefined) return null;
+  if (record === null || typeof record !== "object" || Array.isArray(record))
+    throw new TypeError("expectedFileDigests must be a path-to-SHA-256 object");
+  const entries = Object.entries(record);
+  if (entries.length !== selectedPaths.size || entries.some(([path, digest]) =>
+    !selectedPaths.has(path) || typeof digest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(digest)))
+    throw new TypeError("expectedFileDigests must cover the selected paths exactly with canonical SHA-256 digests");
+  return new Map(entries);
+}
+
+function assertExpectedCandidateDigests(gitBin, root, indexEntries, expected) {
+  const remaining = new Map(expected);
+  for (const entry of splitNull(indexEntries)) {
+    const tab = entry.indexOf("\t");
+    const [mode, oid, stage] = entry.slice(0, tab).split(" ");
+    const path = entry.slice(tab + 1);
+    if (!remaining.has(path) || stage !== "0" || !["100644", "100755"].includes(mode))
+      throw new Error(`expected digest requires a regular candidate file: ${path}`);
+    // Hash the actual object Git will commit, not the source path. A clean
+    // filter or line-ending conversion must not silently change received bytes.
+    const object = spawnSync(gitBin, ["cat-file", "blob", oid], { cwd: root, maxBuffer: 128 * 1024 * 1024 });
+    if (object.error) throw object.error;
+    if (object.status !== 0) throw new Error(`candidate Git blob unavailable: ${path}`);
+    const measured = `sha256:${createHash("sha256").update(object.stdout).digest("hex")}`;
+    if (measured !== remaining.get(path))
+      throw Object.assign(new Error(`candidate digest differs from expected bytes: ${path}`), { code: "SELECTED_FILE_DIGEST_MISMATCH" });
+    remaining.delete(path);
+  }
+  if (remaining.size) throw new Error("expected digest selected a file absent from the candidate");
 }
 
 function validateOptions(paths, message, beforeInstall) {

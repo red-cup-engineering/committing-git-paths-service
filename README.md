@@ -24,6 +24,7 @@ Options:
 - `--path <literal-file>` — complete file endpoint to commit; repeatable, at least one required
 - `--paths-from <file>` — read literal paths from a file, one per line, so a commit is not limited by the argument list size
 - `--across-repositories` — group the paths by their owning Git repository (nested submodules included) and commit each group; without it, nested-repository endpoints are refused
+- `--expected-file-digests <json-file>` — optional canonical `sha256:<hex>` for every selected file in one repository; tests the actual candidate Git blob before committing
 - `--message <message>` — commit message (required)
 - `--dry-run` — validate repository, policies, and endpoints, then print a no-mutation plan
 - `--git-bin <path>` — path to Git (default: `/usr/bin/git`)
@@ -77,4 +78,8 @@ Run `npm run verify`. The native tests invoke the real CLI and library in
 temporary repositories. A manifest-only operation must keep every other
 committed tree entry, outside staged Git tuples and existing working bytes.
 If the selected file changes before installation, the branch and pre-existing
-index must remain unchanged. No test publishes a package or pushes a ref.
+index must remain unchanged. A producer-receipt check binds
+its digest to the actual Git blob rather than the raw working bytes. The digest
+option is never a grant to write and does not apply across worktrees. Dry-run
+validates digest coverage without staging any files. No test publishes a
+package or pushes a ref.

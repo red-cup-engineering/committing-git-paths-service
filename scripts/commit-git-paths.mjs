@@ -20,6 +20,7 @@ export function parseArgs(argv) {
     if (argument === "--repository") options.repository = argv[++index];
     else if (argument === "--path") options.paths.push(argv[++index]);
     else if (argument === "--paths-from") options.paths.push(...readPathsFile(argv[++index]));
+    else if (argument === "--expected-file-digests") options.expectedFileDigests = JSON.parse(readFileSync(argv[++index], "utf8"));
     else if (argument === "--message") options.message = argv[++index];
     else if (argument === "--git-bin") options.gitBin = argv[++index];
     else if (argument === "--dry-run") options.dryRun = true;
@@ -34,7 +35,7 @@ export function parseArgs(argv) {
 function main({ argv, stdout }) {
   const options = parseArgs(argv);
   if (options.help) {
-    stdout.write("usage: commit-git-paths --repository <path> --path <literal-file> [--path <literal-file>...] [--paths-from <file listing one path per line>] --message <message> [--across-repositories] [--dry-run] [--git-bin <path>]\n");
+    stdout.write("usage: commit-git-paths --repository <path> --path <literal-file> [--path <literal-file>...] [--paths-from <file listing one path per line>] --message <message> [--expected-file-digests <JSON path>] [--across-repositories] [--dry-run] [--git-bin <path>]\n");
     return;
   }
   stdout.write(`${JSON.stringify(options.acrossRepositories ? commitGitPathsAcrossRepositories(options) : commitGitExactFiles(options))}\n`);
@@ -42,7 +43,8 @@ function main({ argv, stdout }) {
 
 /** Commit literal paths by their owning Git repository.  Opt-in keeps the
  * single-repository command's refusal of accidental nested endpoints. */
-export function commitGitPathsAcrossRepositories({ repository, paths, message, gitBin, dryRun }) {
+export function commitGitPathsAcrossRepositories({ repository, paths, message, gitBin, dryRun, expectedFileDigests }) {
+  if (expectedFileDigests !== undefined) throw new TypeError("expectedFileDigests requires a single repository per receiving action");
   if (!repository || !Array.isArray(paths) || paths.length === 0) throw new TypeError("repository and paths are required");
   const groups = new Map();
   for (const path of paths) {
