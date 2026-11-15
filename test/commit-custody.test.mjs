@@ -180,3 +180,43 @@ fi
   assert.deepEqual(readFileSync(index),saved);
   assert.equal(readFileSync(lock,"utf8"),"foreign lock after ref commit\n");
 });
+
+test("detached HEAD is not a target for an exact-file receiving operation", t => {
+  const {repository,git,write,parent}=checkout(t);
+  git("switch","--detach","-q",parent);
+  write("package.json",'{"name":"qualified"}\n');
+  const index=join(repository,".git","index"),before=readFileSync(index);
+  const result=commitGitExactFiles({repository,paths:["package.json"],message:"Receive package edit"});
+  assert.equal(result.committed,false);
+  assert.equal(result.reason,"no-checked-out-branch");
+  assert.equal(git("rev-parse","HEAD").trim(),parent);
+  assert.equal(git("rev-parse","refs/heads/main").trim(),parent);
+  assert.equal(git("for-each-ref","refs/commit-git-exact-files/witness"),"");
+  assert.deepEqual(readFileSync(index),before);
+});
+
+test("a ref-transaction HEAD retarget never installs the old checkout's index", t => {
+  const {repository,git,write,parent}=checkout(t);
+  git("branch","other",parent);
+  write("src/staged.mjs","export const staged = 4;\n");git("add","src/staged.mjs");
+  write("package.json",'{"name":"qualified"}\n');
+  const index=join(repository,".git","index"),before=readFileSync(index);
+  writeFileSync(join(repository,".git","hooks","reference-transaction"),`#!/bin/sh
+if [ "$1" = committed ]; then
+  while read -r before after ref; do
+    if [ "$ref" = refs/heads/main ]; then
+      git symbolic-ref HEAD refs/heads/other
+    fi
+  done
+fi
+`,{mode:0o755});
+  const result=commitGitExactFiles({repository,paths:["package.json"],message:"Receive qualified package"});
+  assert.equal(result.committed,true);
+  assert.equal(result.reason,"source-head-changed-after-commit");
+  assert.equal(result.indexReconciled,false);
+  assert.equal(git("symbolic-ref","HEAD").trim(),"refs/heads/other");
+  assert.equal(git("rev-parse","refs/heads/main").trim(),result.head);
+  assert.equal(git("rev-parse","HEAD").trim(),parent);
+  assert.equal(git("rev-parse",result.witnessRef).trim(),result.head);
+  assert.deepEqual(readFileSync(index),before);
+});

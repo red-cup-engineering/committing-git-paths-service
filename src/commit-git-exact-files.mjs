@@ -68,6 +68,9 @@ export function commitGitExactFiles({ repository = process.cwd(), paths, message
       return Object.freeze({ repository: root, paths: requestedPaths, message, dryRun, committed: false,
         parent, ref, reason: "source-head-mismatch" });
   }
+  if (ref === null)
+    return Object.freeze({ repository: root, paths: requestedPaths, message, dryRun, committed: false,
+      parent, ref, reason: "no-checked-out-branch" });
   const headTrackedPaths = bulkPathSet(gitBin, root, ["ls-tree", "-z", "-r", "--full-tree", parent]);
   for (const path of requestedPaths) validateEndpoint(root, path, headTrackedPaths);
 
@@ -101,6 +104,11 @@ export function commitGitExactFiles({ repository = process.cwd(), paths, message
         return Object.freeze({ repository: root, paths: requestedPaths, message, committed: false, parent, committedPaths, reason: "index-reconciliation-lost", candidate, witnessRef, indexReconciled: false });
       const installed = tryInstall(gitBin, root, ref, candidate, parent);
       if (!installed) return Object.freeze({ repository: root, paths: requestedPaths, message, committed: false, parent, committedPaths, reason: "head-advanced", candidate, witnessRef, indexReconciled: false });
+      // Another actor may retarget HEAD independently of ordinary Git
+      // checkout, even though the index itself is locked. Preserve their
+      // checkout and report this known branch commit without changing its index.
+      if (symbolicHead(gitBin, root) !== ref || runGitOptional(gitBin, root, ["rev-parse", "--verify", "HEAD"]).trim() !== candidate)
+        return Object.freeze({ repository: root, paths: requestedPaths, message, committed: true, parent, head: candidate, committedPaths, reason: "source-head-changed-after-commit", candidate, witnessRef, indexReconciled: false });
       // Ref and worktree index are separate Git resources. If custody is
       // lost after the ref has moved, report that move and preserve the
       // witness; do not overwrite a foreign lock or attempt a rollback.
@@ -226,8 +234,8 @@ function rejectUnsafeRepositoryState(gitBin, root) {
 }
 
 function symbolicHead(gitBin, root) {
-  const ref = runGitOptional(gitBin, root, ["symbolic-ref", "-q", "HEAD"]).trim();
-  return ref === "" ? "HEAD" : ref;
+  const ref = runGitOptional(gitBin, root, ["symbolic-ref", "--no-recurse", "-q", "HEAD"]).trim();
+  return ref.startsWith("refs/heads/") && runGitOptional(gitBin, root, ["symbolic-ref", "-q", ref]).trim() === "" ? ref : null;
 }
 
 function assertExactPaths(requestedPaths, changedPaths) {

@@ -31,6 +31,12 @@ Options:
 - `--git-bin <path>` — path to Git (default: `/usr/bin/git`)
 - `--exact-files` — accepted for compatibility; literal-file isolation is always used
 
+Use a directly checked-out local branch. Detached or chained symbolic
+HEAD selections are refused before staging. If HEAD is retargeted during
+the actual ref transaction, the receiver reports the already-applied branch
+commit without overwriting the new checkout's index. A named ref and an
+index are not one atomic resource.
+
 The receiver checks its index lock's identity and bytes before moving the
 ref and again before installing the index. If custody is lost in between,
 it reports a moved ref with `indexReconciled: false` and retains the candidate
@@ -56,7 +62,7 @@ const result = commitGitPaths({
 
 `commitGitPaths` and `commitGitExactFiles` are the same operation. It returns
 `committed: false` with `reason: "nothing-staged"`, `"dry-run"`,
-`"selected-worktree-changed"`, `"head-advanced"`, `"source-head-mismatch"`, or `"index-reconciliation-lost"` when it has not moved the
+`"selected-worktree-changed"`, `"head-advanced"`, `"source-head-mismatch"`, `"no-checked-out-branch"`, or `"index-reconciliation-lost"` when it has not moved the
 branch ref.
 
 ## Staged work outside the selection
