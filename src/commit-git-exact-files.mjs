@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { closeSync, existsSync, lstatSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { constants, closeSync, fstatSync, existsSync, lstatSync, mkdtempSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
@@ -97,9 +97,15 @@ export function commitGitExactFiles({ repository = process.cwd(), paths, message
     try {
       beforeInstall?.(Object.freeze({ head: candidate, parent, paths: committedPaths }));
       if (!selectedWorktreeMatchesCandidate(gitBin, root, requestedPaths, requestedSet, forceAddPaths, parent, temporaryIndex, indexEntries)) return Object.freeze({ repository: root, paths: requestedPaths, message, committed: false, parent, committedPaths, reason: "selected-worktree-changed", candidate, witnessRef, indexReconciled: false });
+      if (!indexReconciliationStillOwned(gitBin, root, reconciliation, indexBefore))
+        return Object.freeze({ repository: root, paths: requestedPaths, message, committed: false, parent, committedPaths, reason: "index-reconciliation-lost", candidate, witnessRef, indexReconciled: false });
       const installed = tryInstall(gitBin, root, ref, candidate, parent);
       if (!installed) return Object.freeze({ repository: root, paths: requestedPaths, message, committed: false, parent, committedPaths, reason: "head-advanced", candidate, witnessRef, indexReconciled: false });
-      installIndexReconciliation(gitBin, root, reconciliation, indexBefore);
+      // Ref and worktree index are separate Git resources. If custody is
+      // lost after the ref has moved, report that move and preserve the
+      // witness; do not overwrite a foreign lock or attempt a rollback.
+      if (!installIndexReconciliation(gitBin, root, reconciliation, indexBefore))
+        return Object.freeze({ repository: root, paths: requestedPaths, message, committed: true, parent, head: candidate, committedPaths, reason: "index-reconciliation-lost", candidate, witnessRef, indexReconciled: false });
       runGit(gitBin, root, ["update-ref", "-d", witnessRef, candidate]);
       return Object.freeze({ repository: root, paths: requestedPaths, message, committed: true, parent, head: candidate, committedPaths, indexReconciled: true, postCommit: runPostCommitHook(gitBin, root) });
     } finally {
@@ -293,25 +299,49 @@ function prepareIndexReconciliation(gitBin, root, paths, requestedSet, before, c
       throw new Error("selected index reconciliation would change an outside tuple");
     }
     if (runGit(gitBin, root, ["ls-files", "--stage", "-z"]) !== before) throw new Error("the real index changed before reconciliation lock acquisition");
-    return { index, lock, lockIdentity: ownedIdentity, owned: true };
+    const digest = readLockDigest(lock, ownedIdentity);
+    if (digest === null) throw new Error("index reconciliation lock custody lost before verification");
+    return { index, lock, lockIdentity: ownedIdentity, digest, owned: true };
   } catch (error) {
     if (sameLockIdentity(lock, ownedIdentity)) rmSync(lock, { force: true });
     throw error;
   }
 }
 
+function indexReconciliationStillOwned(gitBin, root, reconciliation, before) {
+  return readLockDigest(reconciliation.lock, reconciliation.lockIdentity) === reconciliation.digest &&
+    runGit(gitBin, root, ["ls-files", "--stage", "-z"]) === before;
+}
+
 function installIndexReconciliation(gitBin, root, reconciliation, before) {
-  if (runGit(gitBin, root, ["ls-files", "--stage", "-z"]) !== before) {
-    discardIndexReconciliation(reconciliation);
-    throw new Error("the real index changed while reconciliation was locked");
-  }
+  if (!indexReconciliationStillOwned(gitBin, root, reconciliation, before)) return false;
   renameSync(reconciliation.lock, reconciliation.index);
   reconciliation.owned = false;
+  return true;
 }
 
 function discardIndexReconciliation(reconciliation) {
-  if (reconciliation.owned && sameLockIdentity(reconciliation.lock, reconciliation.lockIdentity)) rmSync(reconciliation.lock, { force: true });
+  if (reconciliation.owned && readLockDigest(reconciliation.lock, reconciliation.lockIdentity) === reconciliation.digest)
+    rmSync(reconciliation.lock, { force: true });
   reconciliation.owned = false;
+}
+
+function readLockDigest(path, expectedIdentity) {
+  let fd;
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || `${stat.dev}:${stat.ino}` !== expectedIdentity || stat.size > 128 * 1024 * 1024) return null;
+    const bytes = readFileSync(fd), after = fstatSync(fd);
+    if (bytes.length !== stat.size || after.size !== stat.size || after.ctimeMs !== stat.ctimeMs ||
+        !sameLockIdentity(path, expectedIdentity)) return null;
+    return createHash("sha256").update(bytes).digest("hex");
+  } catch (error) {
+    if (error.code === "ENOENT" || error.code === "ELOOP") return null;
+    throw error;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
 }
 
 function lockIdentity(path) {

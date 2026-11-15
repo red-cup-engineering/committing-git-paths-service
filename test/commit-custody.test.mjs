@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -129,4 +129,54 @@ test("qualified branch and parent refuse stale receiving before writing any Git 
   assert.equal(result.committed,true);
   assert.equal(result.parent,advanced);
   assert.equal(git("show",`HEAD:${file}`),received);
+});
+
+test("lost index-lock identity or bytes cannot advance the ref or replace the real index", async t => {
+  for (const mode of ["replacement-inode", "changed-bytes"]) await t.test(mode, t => {
+    const {repository,git,parent,write}=checkout(t);
+    write("src/staged.mjs","export const staged = 2;\n");
+    git("add","src/staged.mjs");
+    write("package.json",'{"name":"qualified"}\n');
+    const index=join(repository,".git","index"),lock=index+".lock";
+    const saved=readFileSync(index), foreign=Buffer.from("independent Git lock owner\n");
+    const result=commitGitExactFiles({repository,paths:["package.json"],message:"Receive package edit",beforeInstall(){
+      if (mode==="replacement-inode") renameSync(lock,lock+".prior");
+      writeFileSync(lock,foreign);
+    }});
+    assert.equal(result.committed,false);
+    assert.equal(result.reason,"index-reconciliation-lost");
+    assert.equal(result.indexReconciled,false);
+    assert.equal(git("rev-parse","HEAD").trim(),parent);
+    assert.equal(git("rev-parse",result.witnessRef).trim(),result.candidate);
+    assert.deepEqual(readFileSync(index),saved);
+    assert.deepEqual(readFileSync(lock),foreign);
+  });
+});
+
+test("lock loss during actual Git ref commit reports the moved ref without installing a foreign index", t => {
+  const {repository,git,write,parent}=checkout(t);
+  const index=join(repository,".git","index"), lock=index+".lock";
+  write("src/staged.mjs","export const staged = 3;\n");git("add","src/staged.mjs");
+  write("package.json",'{"name":"qualified"}\n');
+  const saved=readFileSync(index);
+  const hook=join(repository,".git","hooks","reference-transaction");
+  writeFileSync(hook,`#!/bin/sh
+if [ "$1" = committed ]; then
+  while read -r before after ref; do
+    if [ "$ref" = refs/heads/main ]; then
+      mv .git/index.lock .git/index.lock.original
+      printf 'foreign lock after ref commit\\n' > .git/index.lock
+    fi
+  done
+fi
+`,{mode:0o755});
+  const result=commitGitExactFiles({repository,paths:["package.json"],message:"Receive qualified package"});
+  assert.equal(result.committed,true);
+  assert.equal(result.reason,"index-reconciliation-lost");
+  assert.equal(result.indexReconciled,false);
+  assert.equal(git("rev-parse","HEAD").trim(),result.head);
+  assert.equal(git("rev-parse","HEAD^").trim(),parent);
+  assert.equal(git("rev-parse",result.witnessRef).trim(),result.head);
+  assert.deepEqual(readFileSync(index),saved);
+  assert.equal(readFileSync(lock,"utf8"),"foreign lock after ref commit\n");
 });

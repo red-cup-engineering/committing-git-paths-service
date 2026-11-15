@@ -31,6 +31,11 @@ Options:
 - `--git-bin <path>` — path to Git (default: `/usr/bin/git`)
 - `--exact-files` — accepted for compatibility; literal-file isolation is always used
 
+The receiver checks its index lock's identity and bytes before moving the
+ref and again before installing the index. If custody is lost in between,
+it reports a moved ref with `indexReconciled: false` and retains the candidate
+witness. It does not roll back the ref or install somebody else's lock.
+
 The operator refuses directories, paths through symlink directories, Git
 metadata, nested repositories, unsafe merge/rebase state, configured
 pre-commit/commit-message hooks, and signing. It refuses to install if the
@@ -51,7 +56,7 @@ const result = commitGitPaths({
 
 `commitGitPaths` and `commitGitExactFiles` are the same operation. It returns
 `committed: false` with `reason: "nothing-staged"`, `"dry-run"`,
-`"selected-worktree-changed"`, `"head-advanced"`, or `"source-head-mismatch"` when it has not moved the
+`"selected-worktree-changed"`, `"head-advanced"`, `"source-head-mismatch"`, or `"index-reconciliation-lost"` when it has not moved the
 branch ref.
 
 ## Staged work outside the selection
