@@ -92,3 +92,41 @@ test("a producer digest qualifies the actual Git blob and refuses changed bytes 
   assert.deepEqual(result.committedPaths,[lockfile]);
   assert.equal(git("show",`HEAD:${lockfile}`),received);
 });
+
+test("qualified branch and parent refuse stale receiving before writing any Git ref or index", t => {
+  const { repository, git, write, env, parent } = checkout(t);
+  const file="package-lock.json", received='{"lockfileVersion":3}\n';
+  const expectedFileDigests={ [file]:"sha256:"+createHash("sha256").update(received).digest("hex") };
+  const expectedHead={ref:"refs/heads/main",commit:parent};
+  write(file,received);
+  git("branch","other");
+  git("switch","-q","other");
+  const indexBefore=git("ls-files","--stage"), refsBefore=git("show-ref");
+  const options={repository,paths:[file],message:"Receive lock",expectedHead,expectedFileDigests};
+  const differentBranch=commitGitExactFiles(options);
+  assert.equal(differentBranch.reason,"source-head-mismatch");
+  assert.equal(differentBranch.ref,"refs/heads/other");
+  assert.equal(differentBranch.parent,parent);
+  assert.equal(git("show-ref"),refsBefore);
+  assert.equal(git("ls-files","--stage"),indexBefore);
+  assert.equal(git("for-each-ref","refs/commit-git-exact-files/witness"),"");
+
+  git("switch","-q","main");
+  write("src/runtime.mjs","export const runtime = 2;\n");
+  git("commit","-qm","Independent main-branch change","--","src/runtime.mjs");
+  const advanced=git("rev-parse","HEAD").trim();
+  assert.equal(commitGitExactFiles({...options,dryRun:true}).reason,"source-head-mismatch");
+  assert.equal(commitGitExactFiles(options).reason,"source-head-mismatch");
+  assert.equal(git("rev-parse","HEAD").trim(),advanced);
+  assert.equal(git("for-each-ref","refs/commit-git-exact-files/witness"),"");
+
+  write("expected-head.json",JSON.stringify({...expectedHead,commit:advanced}));
+  write("expected-digests.json",JSON.stringify(expectedFileDigests));
+  const result=JSON.parse(execFileSync(process.execPath,[cli,"--repository",repository,
+    "--path",file,"--expected-head",join(repository,"expected-head.json"),
+    "--expected-file-digests",join(repository,"expected-digests.json"),"--message","Receive lock"],
+    {cwd:repository,env,encoding:"utf8"}));
+  assert.equal(result.committed,true);
+  assert.equal(result.parent,advanced);
+  assert.equal(git("show",`HEAD:${file}`),received);
+});

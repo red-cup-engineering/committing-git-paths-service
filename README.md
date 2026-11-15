@@ -25,6 +25,7 @@ Options:
 - `--paths-from <file>` — read literal paths from a file, one per line, so a commit is not limited by the argument list size
 - `--across-repositories` — group the paths by their owning Git repository (nested submodules included) and commit each group; without it, nested-repository endpoints are refused
 - `--expected-file-digests <json-file>` — optional canonical `sha256:<hex>` for every selected file in one repository; tests the actual candidate Git blob before committing
+- `--expected-head <json-file>` — optional exact `{ref, commit}` from the source qualification step (one full local branch ref and full commit ID); refuse stale or different branch selections before staging
 - `--message <message>` — commit message (required)
 - `--dry-run` — validate repository, policies, and endpoints, then print a no-mutation plan
 - `--git-bin <path>` — path to Git (default: `/usr/bin/git`)
@@ -50,7 +51,7 @@ const result = commitGitPaths({
 
 `commitGitPaths` and `commitGitExactFiles` are the same operation. It returns
 `committed: false` with `reason: "nothing-staged"`, `"dry-run"`,
-`"selected-worktree-changed"`, or `"head-advanced"` when it has not moved the
+`"selected-worktree-changed"`, `"head-advanced"`, or `"source-head-mismatch"` when it has not moved the
 branch ref.
 
 ## Staged work outside the selection

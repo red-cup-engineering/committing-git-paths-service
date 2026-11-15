@@ -47,11 +47,11 @@ function assertDecommissionClaimIsBacked(message, paths) {
  * commit exists to be exact about *what* is committed regardless of *how many* paths that takes; an
  * implementation that silently falls over past a few thousand paths (the OS argv-size ceiling,
  * `ARG_MAX`) contradicts that purpose, so no call site here is sized by argument-list length.
- * @param {{repository?: string, paths: string[], message: string, gitBin?: string, beforeInstall?: (candidate: {head: string, parent: string, paths: string[]}) => void, dryRun?: boolean, expectedFileDigests?: Record<string,string>}} options Exact-file commit options.
+ * @param {{repository?: string, paths: string[], message: string, gitBin?: string, beforeInstall?: (candidate: {head: string, parent: string, paths: string[]}) => void, dryRun?: boolean, expectedFileDigests?: Record<string,string>, expectedHead?: {ref: string, commit: string}}} options Exact-file commit options.
  * @returns {{repository: string, paths: string[], message: string, committed: boolean, head?: string, parent: string, committedPaths?: string[], reason?: string, candidate?: string, witnessRef?: string, indexReconciled?: boolean, postCommit?: {ran: boolean, success: boolean, output: string}}} Commit result or an uninstalled candidate witness.
  * @throws {TypeError|Error} When inputs, repository state, hooks, signing, or file endpoints are unsafe.
  */
-export function commitGitExactFiles({ repository = process.cwd(), paths, message, gitBin = defaultGit, beforeInstall, dryRun = false, expectedFileDigests } = {}) {
+export function commitGitExactFiles({ repository = process.cwd(), paths, message, gitBin = defaultGit, beforeInstall, dryRun = false, expectedFileDigests, expectedHead } = {}) {
   validateOptions(paths, message, beforeInstall);
   assertDecommissionClaimIsBacked(message, paths);
   const root = runGit(gitBin, resolve(repository), ["rev-parse", "--show-toplevel"]).trim();
@@ -60,12 +60,18 @@ export function commitGitExactFiles({ repository = process.cwd(), paths, message
   const expected = expectedDigestMap(expectedFileDigests, requestedSet);
   rejectUnsupportedPolicies(gitBin, root);
   rejectUnsafeRepositoryState(gitBin, root);
-  const headTrackedPaths = bulkPathSet(gitBin, root, ["ls-tree", "-z", "-r", "--full-tree", "HEAD"]);
+  const ref = symbolicHead(gitBin, root);
+  const parent = runGit(gitBin, root, ["rev-parse", "HEAD"]).trim();
+  if (expectedHead !== undefined) {
+    validateExpectedHead(gitBin, root, expectedHead);
+    if (expectedHead.ref !== ref || expectedHead.commit !== parent)
+      return Object.freeze({ repository: root, paths: requestedPaths, message, dryRun, committed: false,
+        parent, ref, reason: "source-head-mismatch" });
+  }
+  const headTrackedPaths = bulkPathSet(gitBin, root, ["ls-tree", "-z", "-r", "--full-tree", parent]);
   for (const path of requestedPaths) validateEndpoint(root, path, headTrackedPaths);
 
-  const parent = runGit(gitBin, root, ["rev-parse", "HEAD"]).trim();
   if (dryRun) return Object.freeze({ repository: root, paths: requestedPaths, message, dryRun: true, committed: false, parent, reason: "dry-run" });
-  const ref = symbolicHead(gitBin, root);
   const indexBefore = runGit(gitBin, root, ["ls-files", "--stage", "-z"]);
   const temporaryDirectory = mkdtempSync(join(tmpdir(), "commit-git-exact-files-"));
   const temporaryIndex = join(temporaryDirectory, "index");
@@ -102,6 +108,15 @@ export function commitGitExactFiles({ repository = process.cwd(), paths, message
   } finally {
     rmSync(temporaryDirectory, { recursive: true, force: true });
   }
+}
+
+function validateExpectedHead(gitBin, root, selection) {
+  if (!selection || Object.getPrototypeOf(selection) !== Object.prototype ||
+      Object.keys(selection).sort().join(",") !== "commit,ref" ||
+      typeof selection.ref !== "string" || !selection.ref.startsWith("refs/heads/") ||
+      typeof selection.commit !== "string" || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(selection.commit))
+    throw new TypeError("expectedHead must name one full branch ref and exact Git commit");
+  runGit(gitBin, root, ["check-ref-format", selection.ref]);
 }
 
 function expectedDigestMap(record, selectedPaths) {
