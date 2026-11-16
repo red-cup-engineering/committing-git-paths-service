@@ -220,3 +220,32 @@ fi
   assert.equal(git("rev-parse",result.witnessRef).trim(),result.head);
   assert.deepEqual(readFileSync(index),before);
 });
+
+test("an explicit two-endpoint rename stays literal and leaves outside staged deletion intact", t => {
+  const { repository, git, write, read } = checkout(t);
+  const from = "src/runtime.mjs";
+  const to = "src/runtime[1].mjs";
+  const neighbor = "src/runtime1.mjs";
+  write(neighbor, "export const neighbor = 1;\n");
+  git("add", "--", neighbor);
+  git("commit", "-qm", "Add similarly named source");
+  const parent = git("rev-parse", "HEAD").trim();
+  const bytes = read(from);
+  renameSync(join(repository, from), join(repository, to));
+  git("rm", "-q", "--", "src/staged.mjs");
+  write(neighbor, "export const neighbor = 2;\n");
+
+  const result = commitGitExactFiles({
+    repository, paths: [from, to], message: "Rename selected source endpoints",
+    expectedHead: { ref: "refs/heads/main", commit: parent },
+  });
+  assert.equal(result.committed, true);
+  assert.equal(result.indexReconciled, true);
+  assert.deepEqual(new Set(result.committedPaths), new Set([from, to]));
+  assert.equal(git("diff-tree", "--no-commit-id", "--no-renames", "--name-status", "-r", "HEAD"),
+    "D\tsrc/runtime.mjs\nA\tsrc/runtime[1].mjs\n");
+  assert.equal(git("show", "HEAD:" + to), bytes);
+  assert.equal(git("show", "HEAD:" + neighbor), "export const neighbor = 1;\n");
+  assert.equal(read(neighbor), "export const neighbor = 2;\n");
+  assert.equal(git("diff", "--cached", "--name-status"), "D\tsrc/staged.mjs\n");
+});
